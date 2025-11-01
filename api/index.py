@@ -1,19 +1,12 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from mangum import Mangum
+from http.server import BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
+import json
 import os
 from datetime import datetime
 import requests
 
-app = FastAPI(title="Weather API", version="1.0.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Helper function to extract weather data
 
 
 def extract_weather(data: dict, forecast_data: dict) -> dict:
@@ -72,40 +65,65 @@ def extract_weather(data: dict, forecast_data: dict) -> dict:
     }
 
 
-def ensure_api_key() -> str:
-    key = os.getenv("OPENWEATHER_API_KEY")
-    if not key:
-        raise HTTPException(status_code=500, detail="Missing OpenWeather API key")
-    return key
-
-
-@app.get("/weather")
-async def get_weather(city: str):
-    api_key = ensure_api_key()
-    try:
-        params = {"q": city, "appid": api_key, "units": "metric"}
-        current = requests.get("https://api.openweathermap.org/data/2.5/weather", params=params)
-        forecast = requests.get("https://api.openweathermap.org/data/2.5/forecast", params=params)
-        current.raise_for_status()
-        forecast.raise_for_status()
-        return extract_weather(current.json(), forecast.json())
-    except requests.RequestException:
-        raise HTTPException(status_code=404, detail="City not found") from None
-
-
-@app.get("/weather/coords")
-async def get_weather_by_coords(lat: float, lon: float):
-    api_key = ensure_api_key()
-    try:
-        params = {"lat": lat, "lon": lon, "appid": api_key, "units": "metric"}
-        current = requests.get("https://api.openweathermap.org/data/2.5/weather", params=params)
-        forecast = requests.get("https://api.openweathermap.org/data/2.5/forecast", params=params)
-        current.raise_for_status()
-        forecast.raise_for_status()
-        return extract_weather(current.json(), forecast.json())
-    except requests.RequestException:
-        raise HTTPException(status_code=404, detail="Location not found") from None
-
-
-# Vercel serverless function handler using Mangum adapter
-handler = Mangum(app, lifespan="off")
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        # Parse URL and query parameters
+        parsed_path = urlparse(self.path)
+        path = parsed_path.path
+        query_params = parse_qs(parsed_path.query)
+        
+        # Set CORS headers
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', '*')
+        self.end_headers()
+        
+        try:
+            api_key = os.getenv("OPENWEATHER_API_KEY")
+            if not api_key:
+                self.wfile.write(json.dumps({"error": "Missing API key"}).encode())
+                return
+            
+            # Handle /api/weather endpoint
+            if '/weather' in path and 'city' in query_params:
+                city = query_params['city'][0]
+                params = {"q": city, "appid": api_key, "units": "metric"}
+                current = requests.get("https://api.openweathermap.org/data/2.5/weather", params=params)
+                forecast = requests.get("https://api.openweathermap.org/data/2.5/forecast", params=params)
+                
+                if current.status_code == 200 and forecast.status_code == 200:
+                    result = extract_weather(current.json(), forecast.json())
+                    self.wfile.write(json.dumps(result).encode())
+                else:
+                    self.wfile.write(json.dumps({"error": "City not found"}).encode())
+                return
+            
+            # Handle /api/weather/coords endpoint
+            if '/weather/coords' in path or '/weather-coords' in path:
+                lat = float(query_params.get('lat', [0])[0])
+                lon = float(query_params.get('lon', [0])[0])
+                params = {"lat": lat, "lon": lon, "appid": api_key, "units": "metric"}
+                current = requests.get("https://api.openweathermap.org/data/2.5/weather", params=params)
+                forecast = requests.get("https://api.openweathermap.org/data/2.5/forecast", params=params)
+                
+                if current.status_code == 200 and forecast.status_code == 200:
+                    result = extract_weather(current.json(), forecast.json())
+                    self.wfile.write(json.dumps(result).encode())
+                else:
+                    self.wfile.write(json.dumps({"error": "Location not found"}).encode())
+                return
+            
+            # Default response
+            self.wfile.write(json.dumps({"error": "Invalid endpoint"}).encode())
+            
+        except Exception as e:
+            self.wfile.write(json.dumps({"error": str(e)}).encode())
+    
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', '*')
+        self.end_headers()
