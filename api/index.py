@@ -1,11 +1,11 @@
 import os
 from datetime import datetime
+from typing import Optional
 
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-
-API_KEY = os.getenv("OPENWEATHER_API_KEY")
+from fastapi.responses import JSONResponse
 
 app = FastAPI(title="Weather API", version="1.0.0")
 
@@ -107,3 +107,7 @@ async def get_weather_by_coords(lat: float, lon: float):
         return extract_weather(current.json(), forecast.json())
     except requests.RequestException:
         raise HTTPException(status_code=404, detail="Location not found") from None
+
+
+# Vercel serverless function handler
+handler = app
