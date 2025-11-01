@@ -1,11 +1,9 @@
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from mangum import Mangum
 import os
 from datetime import datetime
-from typing import Optional
-
 import requests
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 app = FastAPI(title="Weather API", version="1.0.0")
 
@@ -109,5 +107,5 @@ async def get_weather_by_coords(lat: float, lon: float):
         raise HTTPException(status_code=404, detail="Location not found") from None
 
 
-# Vercel serverless function handler
-handler = app
+# Vercel serverless function handler using Mangum adapter
+handler = Mangum(app, lifespan="off")
